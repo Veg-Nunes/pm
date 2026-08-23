@@ -1,0 +1,52 @@
+{
+  "database": "SQLite",
+  "file": "backend/data/kanban.db",
+  "tables": [
+    {
+      "name": "users",
+      "description": "One row per user. MVP only ever authenticates the hardcoded 'user'/'password' (see backend auth), but the table is shaped to support real multi-user auth later without a schema change.",
+      "columns": [
+        { "name": "id", "type": "INTEGER", "primary_key": true, "autoincrement": true },
+        { "name": "username", "type": "TEXT", "not_null": true, "unique": true },
+        { "name": "password_hash", "type": "TEXT", "not_null": true, "description": "Not used for the MVP login check (that's hardcoded). Present so a real password can be set later without altering the table." },
+        { "name": "created_at", "type": "TEXT", "not_null": true, "default": "CURRENT_TIMESTAMP", "description": "ISO 8601 UTC timestamp." }
+      ]
+    },
+    {
+      "name": "boards",
+      "description": "One row per board. unique(user_id) enforces the MVP's 'one board per user' limit; dropping that constraint later is enough to allow multiple boards per user.",
+      "columns": [
+        { "name": "id", "type": "INTEGER", "primary_key": true, "autoincrement": true },
+        { "name": "user_id", "type": "INTEGER", "not_null": true, "unique": true, "foreign_key": { "table": "users", "column": "id", "on_delete": "CASCADE" } },
+        { "name": "created_at", "type": "TEXT", "not_null": true, "default": "CURRENT_TIMESTAMP" }
+      ]
+    },
+    {
+      "name": "board_columns",
+      "description": "A Kanban column (e.g. 'Backlog'). Named board_columns, not columns, to avoid confusion with the SQL/schema term 'column'.",
+      "columns": [
+        { "name": "id", "type": "INTEGER", "primary_key": true, "autoincrement": true },
+        { "name": "board_id", "type": "INTEGER", "not_null": true, "foreign_key": { "table": "boards", "column": "id", "on_delete": "CASCADE" } },
+        { "name": "title", "type": "TEXT", "not_null": true },
+        { "name": "position", "type": "INTEGER", "not_null": true, "description": "0-based order among this board's columns. Left-to-right render order." }
+      ],
+      "indexes": [
+        { "columns": ["board_id", "position"], "unique": true, "description": "One column can't occupy two positions on the same board." }
+      ]
+    },
+    {
+      "name": "cards",
+      "description": "A card within a column.",
+      "columns": [
+        { "name": "id", "type": "INTEGER", "primary_key": true, "autoincrement": true },
+        { "name": "column_id", "type": "INTEGER", "not_null": true, "foreign_key": { "table": "board_columns", "column": "id", "on_delete": "CASCADE" } },
+        { "name": "title", "type": "TEXT", "not_null": true },
+        { "name": "details", "type": "TEXT", "not_null": true, "default": "" },
+        { "name": "position", "type": "INTEGER", "not_null": true, "description": "0-based order within this column. Top-to-bottom render order." }
+      ],
+      "indexes": [
+        { "columns": ["column_id", "position"], "unique": true, "description": "One card can't occupy two positions in the same column." }
+      ]
+    }
+  ]
+}
