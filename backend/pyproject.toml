@@ -5,8 +5,10 @@ description = "FastAPI backend for the Kanban PM app"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.141.1",
+    "httpx>=0.28.1",
     "itsdangerous>=2.2.0",
     "python-dotenv>=1.2.3",
+    "truststore>=0.10.4",
     "uvicorn[standard]>=0.52.4",
 ]
 
@@ -16,6 +18,5 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.1.1",
 ]

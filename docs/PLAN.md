@@ -323,11 +323,11 @@ fixture ids.
 
 Prove the backend can call an LLM via OpenRouter.
 
-- [ ] Backend: OpenRouter client using `OPENROUTER_API_KEY` from `.env`.
-- [ ] `POST /api/ai/ping` (or similar dev-only route) that sends a trivial
+- [x] Backend: OpenRouter client using `OPENROUTER_API_KEY` from `.env`.
+- [x] `POST /api/ai/ping` (or similar dev-only route) that sends a trivial
       prompt (e.g. "What is 2+2? Answer with only the number.") and returns
       the model's answer.
-- [ ] Choose and document the specific OpenRouter model used.
+- [x] Choose and document the specific OpenRouter model used.
 
 **Tests / verification:**
 - Backend test (may be marked as requiring network/API key, skipped in CI
@@ -337,20 +337,46 @@ Prove the backend can call an LLM via OpenRouter.
 **Success criteria:** a real OpenRouter call succeeds end-to-end and
 returns the expected answer, run manually and documented as tested.
 
+**Status: done.** `backend/ai.py` adds `call_openrouter()` (posts to
+OpenRouter's OpenAI-compatible `/chat/completions` endpoint) and `POST
+/api/ai/ping`, behind `require_session` like every other route. Model
+chosen: `openai/gpt-4o-mini` - cheap and fast, and it supports OpenRouter's
+Structured Outputs feature that Part 9's board-aware chat endpoint needs.
+2/2 new backend tests pass: `test_ping_requires_session` (always runs) and
+`test_ping_asks_openrouter_and_gets_four` (a real network call, `skipif`'d
+on a missing `OPENROUTER_API_KEY`). Full suite is 26/26. Manually verified
+twice: via `uv run uvicorn` locally, and via `curl` against the real
+Docker container after logging in - both returned `{"answer":"4"}`.
+
+Bug found and fixed, same class as the Part 4 fonts issue: the real
+OpenRouter call initially failed locally with `SSL: CERTIFICATE_VERIFY_FAILED`
+- this dev machine's network TLS-intercepts outbound HTTPS, and `httpx`'s
+default `certifi` CA bundle doesn't trust the intercepting proxy's
+certificate. Unlike the Google Fonts case, this network dependency is the
+entire point of Part 8 and can't be designed away. Root-caused (not
+guessed) as the same underlying issue that made `uv add`/`uv sync` need
+`--system-certs` earlier in the project; fixed the same way, using the
+`truststore` package to point `httpx`'s SSL context at the OS trust store
+instead of `certifi`'s bundled one (`truststore.inject_into_ssl()` in
+`backend/ai.py`). This was not needed inside the Docker container - the
+real `curl` test against it succeeded without it, so the interception is
+specific to this host's own network path, not something the shipped app
+needs to work around in general.
+
 ---
 
 ## Part 9: AI Kanban-Aware Chat Endpoint
 
 Extend the AI call to be board-aware and return structured output.
 
-- [ ] Backend: `POST /api/ai/chat` accepting `{ message, history }`.
-- [ ] Request to OpenRouter includes: the current board JSON, the
+- [x] Backend: `POST /api/ai/chat` accepting `{ message, history }`.
+- [x] Request to OpenRouter includes: the current board JSON, the
       conversation history, and the user's new message.
-- [ ] Use OpenRouter Structured Outputs (JSON schema) so the response is
+- [x] Use OpenRouter Structured Outputs (JSON schema) so the response is
       `{ reply: string, boardUpdate?: <board patch/full board> }`.
-- [ ] On a returned `boardUpdate`, apply it to the database (reusing Part 6
+- [x] On a returned `boardUpdate`, apply it to the database (reusing Part 6
       persistence logic).
-- [ ] Decide and document the shape of `boardUpdate` (full board replace vs.
+- [x] Decide and document the shape of `boardUpdate` (full board replace vs.
       targeted patch operations) in `docs/database.md` or a new doc.
 
 **Tests / verification:**
@@ -365,20 +391,56 @@ board updates from the AI are correctly persisted, and non-update chats
 leave the board untouched - covered by mocked unit tests plus one verified
 real-API run.
 
+**Status: done.** `POST /api/ai/chat` (`backend/ai.py`) sends a system
+prompt plus the live board JSON plus conversation history to OpenRouter,
+constrained to a strict JSON schema (`CHAT_JSON_SCHEMA`) that returns
+`{reply, operations}` - `operations` being the model's instruction list
+(create/edit/move a card), separate from `boardUpdate`, which is the API
+response's full post-change board snapshot (chose full board over a patch
+- see `docs/ai-chat.md` for the reasoning). Applying operations reuses
+`db.py`'s `create_card`/`update_card_fields`/`move_card` - the same
+functions `board.py`'s human-driven routes call, extracted from `board.py`
+into `db.py` in this part specifically so the AI path and the UI path share
+one persistence implementation instead of two. 9 new backend tests (6
+mocked - reply-only leaves the board untouched, create/move operations
+persist and appear in a re-fetch, a hallucinated id is silently skipped
+rather than erroring; 2 real-API, `skipif`'d without a key: one for Part
+8's ping, one that asks the real model to add a specific card and asserts
+it exists afterward). Full suite: 32/32. Also manually verified three real
+conversational turns against the running Docker container: adding a named
+card (persisted, `boardUpdate` returned), a pure question (board
+unchanged, `boardUpdate: null`), and an out-of-scope request ("rename a
+column") correctly refused in the reply rather than attempted.
+
+Bug found while writing the real-API test, not by inspection: the first
+version of the system prompt ("You can create cards, edit... and move...
+- nothing else (you cannot rename columns or add/remove columns)")
+sometimes made `gpt-4o-mini` respond "I can't create new cards" and return
+empty `operations` - it read "add/remove columns" as adjacent to "add
+cards" and got the capability backwards. Confirmed via a scratch script
+that printed the raw OpenRouter completion (not guessed) before rewriting
+the prompt as an explicit bulleted list of the three actions with an
+instruction to actually add the operation rather than only describing it
+in words - verified reliable across several repeated real calls afterward.
+A reminder that a structured-output schema alone doesn't guarantee the
+model exercises the capability you gave it; the prompt's wording matters
+just as much and needs the same "verify with a real call, don't guess"
+treatment as code.
+
 ---
 
 ## Part 10: AI Chat Sidebar UI
 
 Add the chat UI and wire it to auto-refresh the board on AI-driven updates.
 
-- [ ] Frontend: sidebar component with message list, input box, send
+- [x] Frontend: sidebar component with message list, input box, send
       button, loading indicator while awaiting a response.
-- [ ] Sends `{ message, history }` to `POST /api/ai/chat`, appends the
+- [x] Sends `{ message, history }` to `POST /api/ai/chat`, appends the
       reply to the chat history.
-- [ ] If the response includes a board update, refetch/update the board
+- [x] If the response includes a board update, refetch/update the board
       state so the Kanban view reflects it immediately without a manual
       page reload.
-- [ ] Styling matches the existing color scheme and overall visual language
+- [x] Styling matches the existing color scheme and overall visual language
       of the app.
 
 **Tests / verification:**
@@ -392,3 +454,104 @@ Add the chat UI and wire it to auto-refresh the board on AI-driven updates.
 **Success criteria:** a user can drive Kanban changes entirely through the
 chat sidebar and see the board update live, covered end-to-end by an
 automated test.
+
+**Status: done.** `frontend/src/components/ChatSidebar.tsx` - message list,
+input, Send button, "Thinking..." loading indicator, rendered by
+`KanbanBoard`. Calls `sendChatMessage(message, history)`
+(`frontend/src/lib/api.ts`); the response's `boardUpdate` (when present) is
+passed straight to `KanbanBoard`'s `setBoard` - no refetch needed, since
+Part 9's `boardUpdate` is already the full current board in the same shape
+`fetchBoard()` returns. Session expiry during a chat call triggers logout,
+same as every other mutation. 6 new frontend unit tests (mocked `@/lib/api`)
+plus 2 new e2e tests making real OpenRouter calls (skipped without
+`OPENROUTER_API_KEY`, matching Part 8/9's backend test pattern): adding a
+card via chat appears on the board with no reload, and a non-board-changing
+question leaves the board untouched. Full suites: 20/20 frontend unit,
+32/32 backend, 10/10 e2e (run twice, stable). Also manually verified via a
+real browser against the running Docker container: login, board + sidebar
+render with consistent styling, a chat-driven card creation appears live,
+a follow-up question doesn't change the board, zero console errors during
+either exchange.
+
+Two bugs found while testing, not by inspection:
+
+1. **Layout regression from adding the sidebar.** Squeezing a fixed-340px
+   sidebar next to the existing 5-column board (at `lg`, 1024px+) left the
+   board too narrow at common widths, including Playwright's 1280px
+   default test viewport - card `details` text wrapped onto many lines,
+   pushing card height past the viewport's fold. The drag-and-drop e2e test
+   (passing since Part 7) started failing consistently: `page.mouse.move`/
+   `down` don't auto-scroll like locator actions do, so the computed drop
+   coordinates landed off-screen, the mousedown missed the card entirely,
+   and the browser performed a native text-selection drag instead of a
+   dnd-kit one - the card silently never moved. Root-caused (not guessed)
+   via a temporary debug spec that logged real bounding boxes and captured
+   screenshots mid-drag, which showed browser text-selection highlighting
+   instead of a drag ghost. Fixed by moving the side-by-side breakpoint from
+   `lg` to `2xl` (1536px) - below that, the assistant panel stacks full-width
+   below the board instead, keeping the board at its original width. See
+   the "Layout: chat sidebar breakpoint" note in `frontend/CLAUDE.md`.
+2. **Cross-file e2e test interference.** With the new `ai-chat.spec.ts`
+   also mutating the Backlog column, it started racing `kanban.spec.ts`'s
+   own Backlog mutations under Playwright's default multi-worker
+   parallelism - both spec files share one backend DB with no per-file
+   reset. Fixed by setting `workers: 1` in `playwright.config.ts`, matching
+   the shared-DB assumption the existing suite already depended on.
+
+---
+
+## Post-Part-10 fix: unreliable drag-and-drop
+
+User report after Part 10 shipped: dragging cards between lanes was
+inconsistent in real use - sometimes a card snapped back to its start,
+sometimes it jumped to the wrong lane, sometimes it landed correctly.
+
+**Root cause:** `KanbanBoard` used dnd-kit's default `closestCorners`
+collision detection, which compares every droppable rect *globally* -
+every column **and every card in every column** - with no notion of "this
+card is nested inside that column." A card's corner in an adjacent column
+could end up geometrically closer than whatever was actually under the
+pointer, so the resolved drop target was effectively unpredictable near
+column/card boundaries. This explains all three symptoms: "wrong lane"
+(collision resolved to a card in a different column), "snapped back"
+(resolved `over` id equaled the active card's own id, which `handleDragEnd`
+correctly treats as a no-op), and "worked sometimes" (when the pointer
+was unambiguously closest to the intended target, `closestCorners` still
+got it right by chance).
+
+**Fix:** replaced it with a custom two-phase `collisionDetectionStrategy`
+in `KanbanBoard.tsx` - the pattern dnd-kit itself documents for
+multi-container sortable boards: `pointerWithin` (falling back to
+`rectIntersection`) first finds which *column* the pointer is over, then
+`closestCenter` - scoped to *only that column's own cards* - finds the
+nearest card within it. A drop past the last card's own rect (not merely
+near its bottom edge, but genuinely below it) is treated as "append to the
+end of this column" rather than "insert before the nearest card," since
+without that explicit check there's no way to target the very end of a
+non-empty column. Full design rationale in `frontend/CLAUDE.md`'s
+"Drag-and-drop collision detection" section.
+
+**Tests / verification:** New `frontend/tests/drag-and-drop.spec.ts` -
+creates temp cards so assertions aren't tied to the seeded card count, then
+performs four move types in sequence, checking the *exact* resulting card
+order (not just "the card is in the right lane") after each: reorder
+within a lane, cross-lane move to the top of a lane, cross-lane move to
+the bottom (append), and cross-lane move to a specific middle position.
+Reloads at the end to confirm the final arrangement persisted, then cleans
+up. Passed 3/3 consecutive runs. Full e2e suite: 11/11, run twice, stable.
+Frontend unit (20/20) and lint unaffected. Also manually verified with a
+real browser (genuine multi-step mouse gestures, not a single teleport)
+against the running Docker container: 5 distinct drags (same-lane reorder,
+cross-lane to top/middle/bottom, and one more cross-lane move), every one
+landing in the exact intended lane and position, confirmed again after a
+page reload, zero drag-related console errors.
+
+Writing the test itself surfaced two unrelated test-authoring gotchas
+(not app bugs, but worth recording so they don't get mistaken for one
+again): dropping "on" a card - even near its bottom edge - always means
+"insert before this card," so testing "insert after" requires a drop point
+past that card's rect entirely; and a Kanban column easily grows taller
+than the default 720px e2e viewport once a couple of cards are added, and
+raw `page.mouse.move`/`down`/`up` don't get dnd-kit's built-in auto-scroll
+the way a real user's drag does, so `drag-and-drop.spec.ts` uses a taller
+1280x1600 viewport rather than fighting mid-drag scrolling.

@@ -47,3 +47,19 @@ export const moveCardRemote = (
 
 export const deleteCardRemote = (cardId: string) =>
   request<void>(`/api/cards/${cardId}`, { method: "DELETE" });
+
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type ChatResult = {
+  reply: string;
+  boardUpdate: BoardData | null;
+};
+
+export const sendChatMessage = (message: string, history: ChatMessage[]) =>
+  request<ChatResult>("/api/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });

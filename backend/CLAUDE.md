@@ -1,17 +1,18 @@
 # Backend
 
 FastAPI app, managed with `uv`. Serves a health check, hardcoded-credential
-session auth, the Kanban board CRUD API (backed by SQLite), and the built
-frontend as static files. AI routes are added in later parts.
+session auth, the Kanban board CRUD API (backed by SQLite), an OpenRouter-backed
+AI route, and the built frontend as static files.
 
 ## Structure
 
 - `pyproject.toml` / `uv.lock` - `uv` project (`src` layout, package name
   `backend`).
 - `src/backend/main.py` - creates the `FastAPI` app, adds
-  `SessionMiddleware`, registers `GET /api/health`, includes the `auth` and
-  `board` routers, then mounts `StaticFiles(html=True)` at `/` last (so
-  `/api/*` is matched before falling through to static file serving).
+  `SessionMiddleware`, registers `GET /api/health`, includes the `auth`,
+  `board`, and `ai` routers, then mounts `StaticFiles(html=True)` at `/`
+  last (so `/api/*` is matched before falling through to static file
+  serving).
 - `src/backend/auth.py` - login/session. `POST /api/login` (body
   `{username, password}`; only hardcoded `user`/`password` succeeds, per
   root `CLAUDE.md`), `POST /api/logout`, `GET /api/me`, and the
@@ -24,9 +25,13 @@ frontend as static files. AI routes are added in later parts.
   call - so a deleted DB file is transparently recreated), `ensure_board`
   (creates the `users`/`boards` rows for a username on first access,
   seeding columns/cards to match the frontend's original demo data if the
-  user has no board yet), and `move_card`/`set_column_cards` (card
-  reordering - see below). DB file at `data/kanban.db` (gitignored,
-  dockerignored - never baked into the image, always created at runtime).
+  user has no board yet), `move_card`/`set_column_cards` (card reordering -
+  see below), and the per-card CRUD primitives `create_card`,
+  `update_card_fields`, `get_owned_column`, `get_owned_card` - deliberately
+  kept here (not in `board.py`) so both `board.py`'s routes and `ai.py`'s
+  chat endpoint call the same functions rather than each having their own
+  copy. DB file at `data/kanban.db` (gitignored, dockerignored - never
+  baked into the image, always created at runtime).
 - `src/backend/board.py` - the Kanban API, all behind `require_session`:
   `GET /api/board` (full board, shaped as `{columns: [{id, title,
   cardIds}], cards: {id: {id, title, details}}}` to match
@@ -50,6 +55,36 @@ frontend as static files. AI routes are added in later parts.
   prefix); `_column_out`/`_card_out` add it back on every response. See
   `test_column_and_card_ids_are_prefixed` in `tests/test_board.py` and the
   Part 7 status note in `docs/PLAN.md`.
+- `src/backend/ai.py` - OpenRouter connectivity, behind `require_session`
+  like everything else. `call_openrouter(messages, **kwargs)` posts to
+  OpenRouter's `/chat/completions` (OpenAI-compatible) endpoint with
+  `OPENROUTER_API_KEY` from `.env`. Model is `openai/gpt-4o-mini` (cheap,
+  fast, and supports OpenRouter Structured Outputs). Calls
+  `truststore.inject_into_ssl()` at import time - on this dev machine,
+  `httpx`'s default certifi CA bundle doesn't trust the network's
+  TLS-intercepting proxy (the same class of problem that broke
+  `next/font/google`, see `frontend/CLAUDE.md`); unlike the fonts case,
+  this network call can't be designed away, so instead `httpx` is pointed
+  at the OS trust store, matching how `uv --system-certs` was used earlier
+  in the project. Not needed inside Docker - real calls from the container
+  work without it.
+  - `POST /api/ai/ping` - sends a trivial "what is 2+2" prompt and returns
+    the answer, proving connectivity (Part 8).
+  - `POST /api/ai/chat` - board-aware chat (Part 9). Takes `{message,
+    history}`, sends a system prompt plus the live board JSON
+    (`get_board()`, same function `GET /api/board` uses) plus the history
+    to OpenRouter with a strict JSON schema response format
+    (`CHAT_JSON_SCHEMA`), gets back `{reply, operations}` where each
+    operation is `create_card` / `edit_card` / `move_card`. Applies each
+    operation via `db.py`'s `create_card` / `update_card_fields` /
+    `move_card` (the same functions `board.py`'s routes use - kept in
+    `db.py` and shared rather than duplicated), skipping any operation with
+    an id that doesn't parse or doesn't belong to this board (a model
+    mistake, not a request worth failing the whole turn over). Returns
+    `{reply, boardUpdate}` where `boardUpdate` is the full post-change board
+    (not a patch) if anything was applied, else `null`. See
+    `docs/ai-chat.md` for the full design rationale (why full-board over a
+    patch, why bad ids fail soft, the exact JSON schema).
 - `static/` - static files served at `/`. In the Docker image this is the
   built Next.js export (`frontend/out`, copied in at build time - see the
   root `Dockerfile`). Outside Docker it still holds the Part 2 placeholder
@@ -60,8 +95,10 @@ frontend as static files. AI routes are added in later parts.
   `db.DB_PATH` monkeypatched to a `tmp_path` file, so tests never touch the
   real `data/kanban.db` and don't leak session cookies between tests), and
   `logged_in_client` (same, pre-authenticated).
-- `tests/test_main.py`, `test_auth.py`, `test_board.py` - route tests
-  mirroring the module split above.
+- `tests/test_main.py`, `test_auth.py`, `test_board.py`, `test_ai.py` -
+  route tests mirroring the module split above. The real-OpenRouter-call
+  test in `test_ai.py` is skipped when `OPENROUTER_API_KEY` isn't set (e.g.
+  CI without the secret); the require-session test always runs.
 
 ## Card ordering / moves
 

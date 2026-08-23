@@ -3,6 +3,11 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   timeout: 60_000,
+  // All spec files share one backend DB (no per-test/per-file reset beyond
+  // the one webServer does at startup - see frontend/CLAUDE.md), so tests
+  // across files that touch the same column (e.g. Backlog) would otherwise
+  // race each other under the default multi-worker parallelism.
+  workers: 1,
   expect: {
     timeout: 10_000,
   },

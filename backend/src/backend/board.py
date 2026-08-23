@@ -4,7 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.auth import require_session
-from backend.db import ensure_board, get_connection, move_card, set_column_cards
+from backend.db import (
+    create_card as db_create_card,
+    ensure_board,
+    get_connection,
+    get_owned_card,
+    get_owned_column,
+    move_card,
+    set_column_cards,
+    update_card_fields,
+)
 
 router = APIRouter()
 
@@ -64,25 +73,14 @@ class CardUpdateRequest(BaseModel):
 
 
 def _get_owned_column(conn, board_id: int, column_id: int):
-    row = conn.execute(
-        "SELECT id FROM board_columns WHERE id = ? AND board_id = ?",
-        (column_id, board_id),
-    ).fetchone()
+    row = get_owned_column(conn, board_id, column_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Column not found")
     return row
 
 
 def _get_owned_card(conn, board_id: int, card_id: int):
-    row = conn.execute(
-        """
-        SELECT cards.id, cards.column_id
-        FROM cards
-        JOIN board_columns ON board_columns.id = cards.column_id
-        WHERE cards.id = ? AND board_columns.board_id = ?
-        """,
-        (card_id, board_id),
-    ).fetchone()
+    row = get_owned_card(conn, board_id, card_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Card not found")
     return row
@@ -161,14 +159,7 @@ def create_card(
     with closing(get_connection()) as conn:
         board_id = ensure_board(conn, username)
         _get_owned_column(conn, board_id, parsed_column_id)
-        position = conn.execute(
-            "SELECT COUNT(*) AS count FROM cards WHERE column_id = ?",
-            (parsed_column_id,),
-        ).fetchone()["count"]
-        card_id = conn.execute(
-            "INSERT INTO cards (column_id, title, details, position) VALUES (?, ?, ?, ?)",
-            (parsed_column_id, body.title, body.details, position),
-        ).lastrowid
+        card_id = db_create_card(conn, parsed_column_id, body.title, body.details)
         conn.commit()
         return CardOut(
             id=f"{CARD_PREFIX}{card_id}", title=body.title, details=body.details
@@ -187,17 +178,7 @@ def update_card(
         card = _get_owned_card(conn, board_id, parsed_card_id)
 
         if body.title is not None or body.details is not None:
-            current = conn.execute(
-                "SELECT title, details FROM cards WHERE id = ?", (parsed_card_id,)
-            ).fetchone()
-            conn.execute(
-                "UPDATE cards SET title = ?, details = ? WHERE id = ?",
-                (
-                    body.title if body.title is not None else current["title"],
-                    body.details if body.details is not None else current["details"],
-                    parsed_card_id,
-                ),
-            )
+            update_card_fields(conn, parsed_card_id, body.title, body.details)
 
         if body.column_id is not None or body.position is not None:
             target_column_id = (

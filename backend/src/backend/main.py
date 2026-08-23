@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from backend import auth, board
+from backend import ai, auth, board
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
@@ -24,5 +24,6 @@ def health() -> dict[str, str]:
 
 app.include_router(auth.router)
 app.include_router(board.router)
+app.include_router(ai.router)
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

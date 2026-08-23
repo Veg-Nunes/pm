@@ -145,6 +145,60 @@ def ensure_board(conn: sqlite3.Connection, username: str) -> int:
     return board_id
 
 
+def get_owned_column(
+    conn: sqlite3.Connection, board_id: int, column_id: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT id FROM board_columns WHERE id = ? AND board_id = ?",
+        (column_id, board_id),
+    ).fetchone()
+
+
+def get_owned_card(
+    conn: sqlite3.Connection, board_id: int, card_id: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT cards.id, cards.column_id
+        FROM cards
+        JOIN board_columns ON board_columns.id = cards.column_id
+        WHERE cards.id = ? AND board_columns.board_id = ?
+        """,
+        (card_id, board_id),
+    ).fetchone()
+
+
+def create_card(
+    conn: sqlite3.Connection, column_id: int, title: str, details: str = ""
+) -> int:
+    position = conn.execute(
+        "SELECT COUNT(*) AS count FROM cards WHERE column_id = ?", (column_id,)
+    ).fetchone()["count"]
+    return conn.execute(
+        "INSERT INTO cards (column_id, title, details, position) VALUES (?, ?, ?, ?)",
+        (column_id, title, details, position),
+    ).lastrowid
+
+
+def update_card_fields(
+    conn: sqlite3.Connection,
+    card_id: int,
+    title: str | None,
+    details: str | None,
+) -> None:
+    current = conn.execute(
+        "SELECT title, details FROM cards WHERE id = ?", (card_id,)
+    ).fetchone()
+    conn.execute(
+        "UPDATE cards SET title = ?, details = ? WHERE id = ?",
+        (
+            title if title is not None else current["title"],
+            details if details is not None else current["details"],
+            card_id,
+        ),
+    )
+
+
 def set_column_cards(
     conn: sqlite3.Connection, column_id: int, ordered_card_ids: list[int]
 ) -> None:
